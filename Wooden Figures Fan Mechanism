@@ -255,87 +255,441 @@ ax1.set_xlim(-220, 170)
 ax1.set_ylim(-145, 170)
 ax1.axis("off")
 
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle, Rectangle, Arc, Polygon
+
+# =========================================================
+# SCHEMATIC: 31-rib fan with Ø200 cm cam disc stacked above
+# a Ø30 cm gear wheel driven by a Ø30 cm pinion.
+# Ribs 120 cm. Opening 144.95°–215.00°, symmetric about vertical axis.
+# Direct matplotlib version -> PNG output
+# =========================================================
+
+# ---- physical parameters ----
+RIB_LEN_CM   = 120
+CAM_D_CM     = 200
+GEAR_D_CM    = 30
+PINION_D_CM  = 60
+N_RIBS       = 31
+ANGLE_MIN    = 144.95
+ANGLE_MAX    = 215.00
+
+CAM_R       = CAM_D_CM / 2
+GEAR_R      = GEAR_D_CM / 2
+PINION_R    = PINION_D_CM / 2
+TOOTH_H     = 1.8
+PIVOT_R     = 2.6
+
+# follower pins spread radially across most of the cam face
+PIN_R_MIN   = 0.42 * CAM_R
+PIN_R_MAX   = 0.93 * CAM_R
+
+# ---- geometry layout ----
+cx, cy = 0.0, 0.0   # plan-view pivot in cm
+
+# section layout
+sx, sy = 240.0, -5.0
+
+# ---------------------------------------------------------
+# helpers
+# ---------------------------------------------------------
+
+def pt(ang_deg, r, ox=cx, oy=cy):
+    a = math.radians(ang_deg)
+    return (ox + r * math.cos(a), oy + r * math.sin(a))
+
+def rib_angles(span):
+    spacing = span / (N_RIBS - 1)
+    return [90 + (i - (N_RIBS - 1) / 2) * spacing for i in range(N_RIBS)]
+
+open_max = rib_angles(ANGLE_MAX)
+open_min = rib_angles(ANGLE_MIN)
+
+def pin_radius(i):
+    t = i / (N_RIBS - 1)
+    if i % 2 == 0:
+        return PIN_R_MIN + t * (PIN_R_MAX - PIN_R_MIN)
+    else:
+        return PIN_R_MAX - t * (PIN_R_MAX - PIN_R_MIN)
+
+def gear_outline_xy(gx, gy, r_pitch, n_teeth, tooth_h, start_angle=0):
+    r_tip  = r_pitch + tooth_h / 2
+    r_root = r_pitch - tooth_h / 2
+    pts = []
+    total = n_teeth * 4
+    for i in range(total):
+        theta = start_angle + i * 360 / total
+        r = r_root if (i % 4) in (0, 3) else r_tip
+        a = math.radians(theta)
+        pts.append((gx + r * math.cos(a), gy + r * math.sin(a)))
+    return pts
+
+def spiral_points(theta_end, r_end, ox=cx, oy=cy):
+    pts = []
+    sweep = 28   # reduced angular sweep because the disc is much larger
+    r_start = max(8, r_end - 0.22 * CAM_R)
+    for t in np.linspace(0, 1, 41):
+        ang = theta_end + sweep * (1 - t)
+        r = r_start + (r_end - r_start) * t
+        pts.append(pt(ang, r, ox, oy))
+    return np.array(pts)
+
+def add_rotation_arrow(ax, center, radius, theta1, theta2, color, lw=1.6):
+    arc = Arc(center, 2*radius, 2*radius, angle=0, theta1=theta1, theta2=theta2,
+              color=color, lw=lw)
+    ax.add_patch(arc)
+
+    th = math.radians(theta2)
+    xh = center[0] + radius * math.cos(th)
+    yh = center[1] + radius * math.sin(th)
+
+    tangent = th + math.pi/2
+    dx = 3.0 * math.cos(tangent)
+    dy = 3.0 * math.sin(tangent)
+
+    ax.annotate(
+        "",
+        xy=(xh, yh),
+        xytext=(xh - dx, yh - dy),
+        arrowprops=dict(arrowstyle="-|>", color=color, lw=lw, mutation_scale=11)
+    )
+
+def add_leader(ax, xf, yf, xt, yt, text, color="#444", ha="left", size=9):
+    ax.plot([xf, xt], [yf, yt], color="#999", lw=0.8)
+    ax.text(xt, yt, " " + text if ha == "left" else text + " ",
+            fontsize=size, color=color, ha=ha, va="center")
+
+# ---------------------------------------------------------
+# figure
+# ---------------------------------------------------------
+
+fig = plt.figure(figsize=(16, 10), dpi=160)
+gs = fig.add_gridspec(1, 2, width_ratios=[1.35, 1.0], wspace=0.16)
+
+ax1 = fig.add_subplot(gs[0, 0])  # plan view
+ax2 = fig.add_subplot(gs[0, 1])  # section
+
+fig.suptitle(
+    "31-Rib Fan — Large Ø 200 cm Cam Disc over Ø 30 cm Gear Wheel",
+    fontsize=16, fontweight="bold", y=0.97
+)
+fig.text(
+    0.5, 0.94,
+    "Schematic — plan view and section A–A · rib length 120 cm · pinion & gear wheel Ø 30 cm · cam disc Ø 200 cm",
+    ha="center", fontsize=10, color="#4b5563"
+)
+
+# =========================================================
+# PLAN VIEW
+# =========================================================
+ax1.set_title("PLAN VIEW", fontsize=11, fontweight="bold", pad=8)
+
+# ghost ribs (min)
+for theta in open_min:
+    x2, y2 = pt(theta, RIB_LEN_CM)
+    ax1.plot([cx, x2], [cy, y2],
+             color="#b89270", lw=0.8, dashes=(4, 3), alpha=0.6, zorder=1)
+
+# main ribs (max)
+for theta in open_max:
+    x2, y2 = pt(theta, RIB_LEN_CM)
+    ax1.plot([cx, x2], [cy, y2],
+             color="#6b4423", lw=1.3, solid_capstyle="round", zorder=2)
+    ax1.add_patch(Circle((x2, y2), 1.0, facecolor="#6b4423", edgecolor="none", zorder=3))
+
+# cam disc
+ax1.add_patch(Circle((cx, cy), CAM_R, facecolor="#e8edfb", edgecolor="#3b4c82",
+                     lw=1.2, alpha=0.50, zorder=4))
+ax1.add_patch(Circle((cx, cy), CAM_R - 2.0, facecolor="none", edgecolor="#6a7bb3",
+                     lw=0.6, linestyle=(0, (3, 3)), alpha=0.7, zorder=5))
+
+# spiral slots
+for i, theta in enumerate(open_max):
+    r_pin = pin_radius(i)
+    pts = spiral_points(theta, r_pin)
+    ax1.plot(pts[:,0], pts[:,1], color="#8a9dd4", lw=3.8, alpha=0.52,
+             solid_capstyle="round", zorder=6)
+    ax1.plot(pts[:,0], pts[:,1], color="white", lw=1.0, alpha=0.9,
+             solid_capstyle="round", zorder=7)
+
+# highlighted slot
+hi = N_RIBS // 2 + 3
+pts = spiral_points(open_max[hi], pin_radius(hi))
+ax1.plot(pts[:,0], pts[:,1], color="#1f3a8a", lw=1.6, alpha=0.9, zorder=8)
+
+# follower pins
+for i, theta in enumerate(open_max):
+    px, py = pt(theta, pin_radius(i))
+    ax1.add_patch(Circle((px, py), 1.3, facecolor="#c0392b", edgecolor="#7b1d12",
+                         lw=0.4, zorder=9))
+
+# gear wheel
+gear_pts = gear_outline_xy(cx, cy, GEAR_R, 30, TOOTH_H)
+ax1.add_patch(Polygon(gear_pts, closed=True, facecolor="#e6d29a",
+                      edgecolor="#8a6d1a", lw=1.0, zorder=10))
+ax1.add_patch(Circle((cx, cy), GEAR_R - TOOTH_H/2 - 0.7, facecolor="#d8c48a",
+                     edgecolor="none", alpha=0.9, zorder=9))
+
+# pinion
+pin_cx = cx
+pin_cy = cy - (GEAR_R + PINION_R)
+pinion_pts = gear_outline_xy(pin_cx, pin_cy, PINION_R, 30, TOOTH_H, start_angle=360/60)
+ax1.add_patch(Polygon(pinion_pts, closed=True, facecolor="#e6d29a",
+                      edgecolor="#8a6d1a", lw=1.0, zorder=10))
+ax1.add_patch(Circle((pin_cx, pin_cy), PINION_R - TOOTH_H/2 - 0.7, facecolor="#d8c48a",
+                     edgecolor="none", alpha=0.9, zorder=9))
+ax1.add_patch(Circle((pin_cx, pin_cy), 2.0, facecolor="#2d2d2d", edgecolor="none", zorder=11))
+ax1.add_patch(Circle((pin_cx, pin_cy), 0.8, facecolor="#c8c8c8", edgecolor="none", zorder=12))
+
+# central pivot
+ax1.add_patch(Circle((cx, cy), PIVOT_R, facecolor="#2d2d2d", edgecolor="none", zorder=12))
+ax1.add_patch(Circle((cx, cy), 0.9, facecolor="#d0d0d0", edgecolor="none", zorder=13))
+
+# rotation arrows
+add_rotation_arrow(ax1, (pin_cx, pin_cy), PINION_R + 7, 30, -30, "#8a6d1a", lw=1.6)
+ax1.text(pin_cx + PINION_R + 12, pin_cy, "ω_in", fontsize=10, color="#8a6d1a",
+         style="italic", va="center")
+
+add_rotation_arrow(ax1, (cx, cy), CAM_R + 10, 160, 195, "#c0392b", lw=1.6)
+lc = pt(178, CAM_R + 18)
+ax1.text(lc[0], lc[1], "ω_cam", fontsize=10, color="#c0392b",
+         style="italic", ha="right", va="center")
+
+# opening dimensions
+dim_r_max = RIB_LEN_CM + 16
+dim_r_min = dim_r_max + 14
+
+def draw_dim_arc(ax, a_left, a_right, r, color, ls, label):
+    angs = np.linspace(a_right, a_left, 180)
+    pts = np.array([pt(a, r) for a in angs])
+    ax.plot(pts[:,0], pts[:,1], color=color, lw=1.0, linestyle=ls, zorder=2)
+    for a in (a_left, a_right):
+        inner = pt(a, r - 3)
+        outer = pt(a, r + 3)
+        ax.plot([inner[0], outer[0]], [inner[1], outer[1]], color=color, lw=1.0)
+    lx, ly = pt(90, r + 8)
+    ax.text(lx, ly, label, fontsize=9, fontweight="bold", color=color, ha="center")
+
+draw_dim_arc(ax1, open_max[0], open_max[-1], dim_r_max, "#c0392b", "-",  "max opening = 215.00°")
+draw_dim_arc(ax1, open_min[0], open_min[-1], dim_r_min, "#8a6d45", "--", "min opening = 144.95°")
+
+# leaders: move all labels outside the drawing, on the left
+x_label = -185
+
+rb = pt(open_max[-2], RIB_LEN_CM - 10)
+add_leader(ax1, rb[0], rb[1], x_label, 115, "rib (×31, L = 120 cm)", "#6b4423", "right")
+
+gh = pt(open_min[1], RIB_LEN_CM - 15)
+add_leader(ax1, gh[0], gh[1], x_label, 95, "rib — min opening", "#8a6d45", "right")
+
+pl = pt(open_max[hi], pin_radius(hi))
+add_leader(ax1, pl[0], pl[1], x_label, 75, "follower pin (×31)", "#7b1d12", "right")
+
+sl_mid_ang = open_max[hi] + 14
+sl = pt(sl_mid_ang, pin_radius(hi) - 18)
+add_leader(ax1, sl[0], sl[1], x_label, 55, "spiral slot (1 per rib)", "#1f3a8a", "right")
+
+cd = pt(110, CAM_R - 4)
+add_leader(ax1, cd[0], cd[1], x_label, 35, "cam disc — Ø 200 cm", "#3b4c82", "right")
+
+gw = pt(45, GEAR_R + TOOTH_H/2)
+add_leader(ax1, gw[0], gw[1], x_label, 15, "gear wheel — Ø 30 cm", "#8a6d1a", "right")
+
+add_leader(ax1, pin_cx - PINION_R, pin_cy, x_label, -5,
+           "drive pinion — Ø 30 cm", "#8a6d1a", "right")
+
+add_leader(ax1, cx + PIVOT_R, cy, x_label, -25,
+           "central pivot — common axis", "#111", "right")
+
+ax1.text(cx - CAM_R - 10, cy, "A", fontsize=10, color="#666", ha="right", va="center")
+ax1.text(cx + CAM_R + 10, cy, "A", fontsize=10, color="#666", ha="left", va="center")
+ax1.plot([cx - CAM_R - 5, cx + CAM_R + 5], [cy, cy], color="#aaa", lw=0.8, dashes=(2, 3))
+
+ax1.set_aspect("equal")
+ax1.set_xlim(-220, 170)
+ax1.set_ylim(-145, 170)
+ax1.axis("off")
+
 # =========================================================
 # SECTION A–A
-# correct vertical order:
-# base plate -> gear wheel -> cam disc -> rib stack
+# two-level vertical arrangement:
+# fourth level = phase-control mechanism
+# fifth level  = fan mechanism / wooden figures
 # =========================================================
-ax2.set_title("SECTION A–A", fontsize=11, fontweight="bold", pad=8)
 
-ax2.plot([sx-110, sx+110], [sy, sy], color="#cfcfcf", lw=0.8, dashes=(2, 3))
+ax2.set_title("SECTION A–A — TWO-LEVEL ARRANGEMENT", fontsize=11, fontweight="bold", pad=8)
 
-# base plate
-base_y = sy - 62
-ax2.add_patch(Rectangle((sx-105, base_y), 210, 4, facecolor="#d9d9d0", edgecolor="#777", lw=0.8))
-ax2.text(sx+118, base_y+2, "base plate (fixed)", fontsize=9, color="#555", va="center")
-
-# gear wheel (lowest moving element)
-gw_top = sy - 40
-gw_bot = sy - 30
-ax2.add_patch(Rectangle((sx-GEAR_R, gw_top), 2*GEAR_R, gw_bot-gw_top,
-                        facecolor="#e6d29a", edgecolor="#8a6d1a", lw=0.8))
-for side_x in (sx-GEAR_R-1.5, sx+GEAR_R-0.5):
-    for dy in (-2.2, 0.8):
-        ax2.add_patch(Rectangle((side_x, sy-35+dy), 2.0, 1.2,
-                                facecolor="#e6d29a", edgecolor="#8a6d1a", lw=0.2))
-ax2.text(sx+118, (gw_top+gw_bot)/2, "gear wheel — Ø 30 cm", fontsize=9, color="#8a6d1a", va="center")
-
-# cam disc (above the gear wheel)
-cam_top = sy - 20
-cam_bot = sy - 8
-ax2.add_patch(Rectangle((sx-CAM_R, cam_top), 2*CAM_R, cam_bot-cam_top,
-                        facecolor="#c8d2ee", edgecolor="#3b4c82", lw=0.8))
-ax2.text(sx+118, (cam_top+cam_bot)/2, "cam disc — Ø 200 cm", fontsize=9, color="#3b4c82", va="center")
-
-# rigid coupling between gear wheel and cam disc
-for dx in (-GEAR_R + 3, GEAR_R - 3):
-    ax2.plot([sx+dx, sx+dx], [gw_bot, cam_top], color="#3b4c82", lw=0.8)
-ax2.text(sx+GEAR_R+5, (gw_bot+cam_top)/2, "rigid coupling", fontsize=7.5,
-         color="#3b4c82", va="center", style="italic")
-
-# rib stack (top element)
-stack_h = 20
-rib_h = stack_h / N_RIBS
-rib_y0 = sy + 6
-for k in range(N_RIBS):
-    yy = rib_y0 + k * rib_h
-    ax2.add_patch(Rectangle((sx-60, yy), 120, rib_h,
-                            facecolor="#8b5a2b", edgecolor="#503020", lw=0.15))
-ax2.text(sx+118, rib_y0 + stack_h/2, "rib stack (×31)", fontsize=9, color="#555", va="center")
-
-# follower pins rise from cam disc into rib stack
-for dx in [-45, -28, -12, 6, 22, 38, 50]:
-    ax2.add_patch(Rectangle((sx+dx-0.7, cam_top), 1.4, (rib_y0+stack_h)-cam_top,
-                            facecolor="#c0392b", edgecolor="#7b1d12", lw=0.2))
-
-# fixed central axle through all layers
-ax2.add_patch(Rectangle((sx-2.0, gw_top-14), 4.0, (rib_y0+stack_h+6)-(gw_top-14),
-                        facecolor="#2d2d2d", edgecolor="#000", lw=0.6))
-ax2.text(sx-CAM_R-10, gw_top-8, "fixed axle", fontsize=9, color="#111", ha="right", va="center")
-
-# pinion meshing gear wheel at gear-wheel height
-pxs = sx - CAM_R - 34
-ax2.add_patch(Rectangle((pxs-10, gw_top-1.5), 20, (gw_bot-gw_top)+3,
-                        facecolor="#e6d29a", edgecolor="#8a6d1a", lw=0.8))
-for dy in (-1.5, 1.5):
-    ax2.add_patch(Rectangle((pxs+10, (gw_top+gw_bot)/2 + dy - 0.4), 1.8, 0.8,
-                            facecolor="#e6d29a", edgecolor="#8a6d1a", lw=0.2))
-ax2.add_patch(Rectangle((pxs-1.2, gw_bot+1), 2.4, 18,
-                        facecolor="#2d2d2d", edgecolor="#000", lw=0.4))
-ax2.add_patch(Rectangle((pxs-1.2, gw_top-12), 2.4, 10,
-                        facecolor="#2d2d2d", edgecolor="#000", lw=0.4))
-ax2.text(pxs, gw_top-17, "pinion Ø 30 cm", fontsize=9, color="#8a6d1a", ha="center")
-ax2.text(pxs, gw_top-12.5, "(drive shaft)", fontsize=7.5, color="#8a6d1a", ha="center", style="italic")
-
-# mesh marker
-ax2.plot([pxs+10, sx-GEAR_R], [(gw_top+gw_bot)/2, (gw_top+gw_bot)/2], color="#c0392b", lw=0.7, dashes=(2, 2))
-ax2.text((pxs+10+sx-GEAR_R)/2, (gw_top+gw_bot)/2 + 2.3, "mesh", fontsize=7.5, color="#c0392b",
-         ha="center", style="italic")
-
-ax2.set_aspect("equal")
-ax2.set_xlim(95, 360)
-ax2.set_ylim(-80, 55)
 ax2.axis("off")
+ax2.set_aspect("equal")
+
+# reference coordinates
+x0 = sx
+y4 = 25      # fourth level
+y5 = -35     # fifth level
+
+# level lines
+ax2.plot([x0-110, x0+110], [y4, y4], color="black", lw=1.2)
+ax2.plot([x0-110, x0+110], [y5, y5], color="firebrick", lw=1.2)
+
+ax2.text(x0-112, y4+5, "fourth level\nphase control", fontsize=9,
+         color="black", ha="right", va="center")
+ax2.text(x0-112, y5+5, "fifth level\nfan mechanism", fontsize=9,
+         color="firebrick", ha="right", va="center")
+
+# gear radii in section drawing, scaled schematically
+r15 = 10
+r30 = 18
+thick = 5
+
+# gear centers in section
+g1x = x0 - 35   # phase-control gear, Ø15
+g2x = x0 + 20   # upper driving wheel, Ø30
+g3x = x0 + 20   # lower driving wheel, Ø30, same vertical shaft
+g4x = x0 - 35   # cam gear, Ø15
+
+# ---------------------------------------------------------
+# fourth level gears
+# ---------------------------------------------------------
+
+# G1 Ø15
+ax2.add_patch(Rectangle((g1x-r15, y4-thick/2), 2*r15, thick,
+                        facecolor="#e6d29a", edgecolor="black", lw=1.0))
+ax2.text(g1x, y4+11, "G1\nØ15", fontsize=8, ha="center", va="bottom")
+
+# G2 Ø30
+ax2.add_patch(Rectangle((g2x-r30, y4-thick/2), 2*r30, thick,
+                        facecolor="#e6d29a", edgecolor="black", lw=1.0))
+ax2.text(g2x, y4+13, "G2\nØ30", fontsize=8, ha="center", va="bottom")
+
+# mesh G1-G2
+ax2.plot([g1x+r15, g2x-r30], [y4, y4],
+         color="#c0392b", lw=0.8, dashes=(2, 2))
+ax2.text((g1x+r15+g2x-r30)/2, y4+4, "15:30", fontsize=8,
+         color="#c0392b", ha="center")
+
+# selected arrow / phase input
+ax2.arrow(g1x-38, y4, 26, 0,
+          head_width=3, head_length=5, fc="green", ec="green", lw=1.2)
+ax2.text(g1x-42, y4+7, "phase-control\narrow", fontsize=8,
+         color="green", ha="right")
+
+# ---------------------------------------------------------
+# vertical shaft G2-G3
+# ---------------------------------------------------------
+
+ax2.plot([g2x, g3x], [y4-thick/2, y5+thick/2],
+         color="darkred", lw=2.0)
+ax2.text(g2x+7, (y4+y5)/2,
+         "common\nvertical shaft", fontsize=8,
+         color="darkred", ha="left", va="center")
+
+# ---------------------------------------------------------
+# fifth level gears
+# ---------------------------------------------------------
+
+# G3 Ø30
+ax2.add_patch(Rectangle((g3x-r30, y5-thick/2), 2*r30, thick,
+                        facecolor="#f0d0d0", edgecolor="firebrick", lw=1.0))
+ax2.text(g3x, y5-12, "G3\nØ30", fontsize=8, color="firebrick",
+         ha="center", va="top")
+
+# G4 Ø15
+ax2.add_patch(Rectangle((g4x-r15, y5-thick/2), 2*r15, thick,
+                        facecolor="#f0d0d0", edgecolor="firebrick", lw=1.0))
+ax2.text(g4x, y5-12, "G4\nØ15", fontsize=8, color="firebrick",
+         ha="center", va="top")
+
+# mesh G3-G4
+ax2.plot([g4x+r15, g3x-r30], [y5, y5],
+         color="#c0392b", lw=0.8, dashes=(2, 2))
+ax2.text((g4x+r15+g3x-r30)/2, y5+4, "30:15", fontsize=8,
+         color="#c0392b", ha="center")
+
+# cam disc on fifth level
+cam_sec_w = 95
+cam_sec_h = 7
+cam_y = y5 + 18
+
+ax2.add_patch(Rectangle((x0-cam_sec_w/2, cam_y-cam_sec_h/2),
+                        cam_sec_w, cam_sec_h,
+                        facecolor="#c8d2ee", edgecolor="#3b4c82", lw=1.0))
+ax2.text(x0+cam_sec_w/2+8, cam_y,
+         "cam disc\nØ200", fontsize=8, color="#3b4c82",
+         ha="left", va="center")
+
+# coupling G4 to cam disc
+ax2.plot([g4x, g4x], [y5+thick/2, cam_y-cam_sec_h/2],
+         color="#3b4c82", lw=1.2)
+
+# rib stack above cam disc
+rib_y = cam_y + 15
+stack_w = 90
+stack_h = 12
+
+for k in range(N_RIBS):
+    yy = rib_y + k * stack_h / N_RIBS
+    ax2.add_patch(Rectangle((x0-stack_w/2, yy),
+                            stack_w, stack_h/N_RIBS,
+                            facecolor="#8b5a2b", edgecolor="#503020",
+                            lw=0.12))
+
+ax2.text(x0+stack_w/2+8, rib_y+stack_h/2,
+         "rib stack\nwooden figures", fontsize=8,
+         color="#6b4423", ha="left", va="center")
+
+# follower pins from cam disc to ribs
+for dx in [-36, -24, -12, 0, 12, 24, 36]:
+    ax2.plot([x0+dx, x0+dx],
+             [cam_y+cam_sec_h/2, rib_y+stack_h],
+             color="#c0392b", lw=1.0)
+
+# central pivot / axle of fan
+ax2.plot([x0, x0], [y5-12, rib_y+stack_h+8],
+         color="#2d2d2d", lw=2.0)
+ax2.text(x0-8, rib_y+stack_h+8,
+         "central pivot", fontsize=8,
+         color="#111", ha="right", va="bottom")
+
+# explanatory note
+ax2.text(x0, -75,
+         "G1→G2 = 15:30 and G3→G4 = 30:15\n"
+         "overall ratio = 1; two gear engagements preserve rotation sense",
+         fontsize=8.5, color="#333", ha="center", va="center")
+
+ax2.set_xlim(95, 365)
+ax2.set_ylim(-90, 65)
+
+# =========================================================
+# NOTES BOX
+# =========================================================
+notes = [
+    "• 31 ribs (L = 120 cm) on the fifth level share a single central pivot and are driven by spiral slots machined into a cam disc (Ø 200 cm).",
+    "• The large diameter ensures well-separated slots and smooth follower motion, allowing a sufficiently fine discretization of the annual cycle (61 positions).",
+    "• The rib assembly is actuated by a cam gear (Ø ≈ 15 cm), driven by a Ø 30 cm wheel rigidly coupled to a corresponding wheel on the fourth level.",
+    "• The phase-control mechanism is located on the fourth level; the fan mechanism is on the fifth level. The two are connected by a common vertical shaft.",
+    "• Kinematic chain: the phase-control arrow sets the phase-control gear wheel (Ø 15 cm), which drives the upper driving wheel (Ø 30 cm)",
+    "  the motion is transmitted to the lower driving wheel (Ø 30 cm) and then to the cam gear (Ø 15 cm).",
+    "• The gear pairs (15:30 and 30:15) are reciprocal, giving a unit overall ratio; with two gear engagements, the direction of rotation is preserved.",
+    "• The imposed angular displacement is transmitted unchanged to the cam system, which converts it into radial motion of the ribs, opening or closing the fan.",
+    "• The fan opens symmetrically about the vertical axis between 144.95° and 215.00° (total stroke 70.05°)."
+]
+
+y0 = 0.12
+fig.text(0.05, y0+0.085, "Working principle & architecture",
+         fontsize=14, fontweight="bold", color="#8a6d1a")
+for i, txt in enumerate(notes):
+    fig.text(0.05, y0+0.063 - i*0.018, txt, fontsize=8.8, color="#3f3f3f")
+
+# =========================================================
+# SAVE PNG
+# =========================================================
+png_path = "ventaglio-camma.png"
+plt.savefig(png_path, dpi=300, bbox_inches="tight", facecolor="#fafaf7")
+print("PNG saved as:", png_path)
+
+plt.show()
 
 # =========================================================
 # NOTES BOX
